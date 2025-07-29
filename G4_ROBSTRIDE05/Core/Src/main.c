@@ -31,7 +31,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define MASTER_ID    0xFD
+#define MOTOR_ID     0x01
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -45,6 +46,7 @@ FDCAN_HandleTypeDef hfdcan1;
 /* USER CODE BEGIN PV */
 FDCAN_TxHeaderTypeDef TxHeader;
 uint8_t TxData[8];
+uint8_t RxData[8];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -53,8 +55,25 @@ static void MX_GPIO_Init(void);
 static void MX_FDCAN1_Init(void);
 /* USER CODE BEGIN PFP */
 static void FDCAN1_Config(void){
+	FDCAN_FilterTypeDef sFilterConfig;
 
+	sFilterConfig.IdType = FDCAN_EXTENDED_ID;
+	sFilterConfig.FilterIndex = 0;
+	sFilterConfig.FilterType = FDCAN_FILTER_MASK;
+	sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+	sFilterConfig.FilterID1 = 0x000;
+	sFilterConfig.FilterID2 = 0x000;
+	if(HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK){
+		Error_Handler();
+	}
+	/* Configure global filter to reject all non-matching frames */
+	if(HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, FDCAN_REJECT, FDCAN_REJECT, FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE) != HAL_OK){
+		Error_Handler();
+	}
 	if(HAL_FDCAN_Start(&hfdcan1) != HAL_OK){
+		Error_Handler();
+	}
+	if(HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK){
 		Error_Handler();
 	}
 
@@ -67,6 +86,16 @@ static void FDCAN1_Config(void){
 	TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
 	TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
 	TxHeader.MessageMarker = 0;
+}
+
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs){
+	FDCAN_RxHeaderTypeDef RxHeader;
+
+	if((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != RESET){
+		if(HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) != HAL_OK){
+			Error_Handler();
+		}
+	}
 }
 /* USER CODE END PFP */
 
@@ -144,18 +173,16 @@ FDCAN1_Config();
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
-
-	  //速度指令値
-	  TxHeader.Identifier = 0x1200FD01;
-	  TxData[0] = 0x0A;
-	  TxData[1] = 0x70;
+	  //通信タイプ0
+	  TxHeader.Identifier = (0x00UL << 24) | (MASTER_ID << 8) | MOTOR_ID;;
+	  TxData[0] = 0x00;
+	  TxData[1] = 0x00;
 	  TxData[2] = 0x00;
 	  TxData[3] = 0x00;
 	  TxData[4] = 0x00;
 	  TxData[5] = 0x00;
-	  TxData[6] = 0x80;
-	  TxData[7] = 0x3F;
+	  TxData[6] = 0x00;
+	  TxData[7] = 0x00;
 	  if(HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1)) {
 	  	    	if(HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData) != HAL_OK) {
 	  	    		Error_Handler();
