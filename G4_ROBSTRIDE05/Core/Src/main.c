@@ -152,6 +152,7 @@ FDCAN1_Config();
 	  	    	}
 	  	}
 
+	  HAL_Delay(1000);
 	  //モーター有効化
 	  TxHeader.Identifier = 0x0300FD01;
 	  TxData[0] = 0x00;
@@ -174,7 +175,7 @@ FDCAN1_Config();
   while (1)
   {
 	  //通信タイプ0
-	  TxHeader.Identifier = (0x00UL << 24) | (MASTER_ID << 8) | MOTOR_ID;;
+	  TxHeader.Identifier = (0x00UL << 24) | (MASTER_ID << 8) | 2;;
 	  TxData[0] = 0x00;
 	  TxData[1] = 0x00;
 	  TxData[2] = 0x00;
@@ -268,7 +269,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.DataTimeSeg1 = 1;
   hfdcan1.Init.DataTimeSeg2 = 1;
   hfdcan1.Init.StdFiltersNbr = 0;
-  hfdcan1.Init.ExtFiltersNbr = 0;
+  hfdcan1.Init.ExtFiltersNbr = 1;
   hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
   if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK)
   {

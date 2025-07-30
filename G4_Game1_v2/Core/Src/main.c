@@ -32,7 +32,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define SCREEN_HEIGHT 360
+#define PADDLE_HEIGHT 100
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -48,6 +49,12 @@ I2C_HandleTypeDef hi2c3;
 
 /* USER CODE BEGIN PV */
 uint8_t adc_value;//0~255
+
+float player_paddle_y;
+float cpu_paddle_y;
+
+uint8_t button1_state;
+uint8_t button2_state;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -100,27 +107,168 @@ int main(void)
   /* USER CODE BEGIN 2 */
   ssd1306_Init(&hi2c3);
   HAL_ADC_Start_DMA(&hadc1, (uint32_t *)&adc_value, 1);
+
+  player_paddle_y = SCREEN_HEIGHT / 2 -
+  PADDLE_HEIGHT / 2;
+  cpu_paddle_y = SCREEN_HEIGHT / 2 -
+  PADDLE_HEIGHT / 2;
+  resetBall(); // ボールを初期位置に
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  uint8_t adc_value_configured = 255 - adc_value;
-//	  char buffer[20];
-	  ssd1306_Fill(Black);
-//	  if(0 < adc_value % 384 && adc_value % 384 < 64){
-//		  ssd1306_DrawPixel(0, adc_value % 384, White);
-//	  }
-	  if(adc_value_configured < 128){
-		  ssd1306_DrawPixel(0, 64 - adc_value_configured / 2, White);
-	  }else{
-		  ssd1306_DrawPixel(127, (adc_value_configured-128)/2, White);
-	  }
-//	  ssd1306_DrawPixel(adc_value_configured, adc_value_configured, White);
-//	  ssd1306_SetCursor(0, 0);
-//	  ssd1306_WriteString("hello", Font_7x10, White);
-	  ssd1306_UpdateScreen(&hi2c3);
+	  player_paddle_y = (int)(((float)adc_value / 4095.0f) * (SCREEN_HEIGHT - PADDLE_HEIGHT));
+
+	  if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6) ==
+	         GPIO_PIN_RESET) {
+	            if (button1_state == 0) {
+	              if (current_game_state ==
+	         GAME_STATE_START || current_game_state ==
+	         GAME_STATE_GAMEOVER) {
+	                player_score = 0;
+	                cpu_score = 0;
+	                resetBall();
+	                current_game_state =
+	         GAME_STATE_PLAYING;
+	              }
+	            }
+	            button1_state = 1;
+	          } else {
+	            button1_state = 0;
+	          }
+
+	          // ボタン2の処理 (ポーズ/リセット -
+//	         必要であれば実装)
+	          // if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) ==
+	         GPIO_PIN_RESET) { ... }
+
+
+	          // --- ゲームロジック ---
+	          if (current_game_state == GAME_STATE_PLAYING)
+	         {
+	              // ボールの移動
+	              ball_x += ball_vx;
+	              ball_y += ball_vy;
+
+	              // ボールと上下の壁の衝突
+	              if (ball_y <= 0 || ball_y >=
+	         SCREEN_HEIGHT - BALL_SIZE) {
+	                  ball_vy *= -1; // Y方向の速度を反転
+	              }
+
+	              // ボールとプレイヤーパドルの衝突
+	              if (ball_x <= PADDLE_WIDTH &&
+	                  ball_y + BALL_SIZE >= player_paddle_y
+	         &&
+	                  ball_y <= player_paddle_y +
+	         PADDLE_HEIGHT) {
+	                  ball_vx *= -1; // X方向の速度を反転
+	                  //
+	         ボールがパドルのどこに当たったかでY方向の速度を微
+	         調整すると面白い
+	              }
+
+	              // ボールとCPUパドルの衝突
+	              if (ball_x >= SCREEN_WIDTH - PADDLE_WIDTH
+	         - BALL_SIZE &&
+	                  ball_y + BALL_SIZE >= cpu_paddle_y &&
+	                  ball_y <= cpu_paddle_y +
+	         PADDLE_HEIGHT) {
+	                  ball_vx *= -1; // X方向の速度を反転
+	              }
+
+	              // ボールが左右の壁を越えた場合（得点）
+	              if (ball_x < 0) { // CPUが得点
+	                  cpu_score++;
+	                  resetBall();
+	                  if (cpu_score >= 5) { // 例:
+	         5点先取でゲームオーバー
+	                      current_game_state =
+	         GAME_STATE_GAMEOVER;
+	                  }
+	              } else if (ball_x > SCREEN_WIDTH -
+	         BALL_SIZE) { // プレイヤーが得点
+	                  player_score++;
+	                  resetBall();
+	                  if (player_score >= 5) { // 例:
+	         5点先取でゲームオーバー
+	                      current_game_state =
+	         GAME_STATE_GAMEOVER;
+	                  }
+	              }
+
+	              // CPUパドルのAI (シンプルにボールを追従)
+	              if (ball_y < cpu_paddle_y + PADDLE_HEIGHT
+	         / 2) {
+	                  cpu_paddle_y -= 1; //
+	         ボールがパドルより上なら上に移動
+	              } else if (ball_y > cpu_paddle_y +
+	         PADDLE_HEIGHT / 2) {
+	                  cpu_paddle_y += 1; //
+	         ボールがパドルより下なら下に移動
+	              }
+	              // パドルが画面外に出ないように制限
+	              if (cpu_paddle_y < 0) cpu_paddle_y = 0;
+	              if (cpu_paddle_y > SCREEN_HEIGHT -
+	         PADDLE_HEIGHT) cpu_paddle_y = SCREEN_HEIGHT -
+	         PADDLE_HEIGHT;
+	          }
+
+
+	          // --- 描画処理 ---
+	          ssd1306_Fill(Black); //
+	         毎フレーム画面をクリア
+
+	          if (current_game_state == GAME_STATE_START) {
+	              ssd1306_SetCursor(20, 20);
+	              ssd1306_WriteString("PONG GAME",
+	         Font_7x10, White);
+	              ssd1306_SetCursor(10, 40);
+	              ssd1306_WriteString("Press BTN1 to Start"
+	         , Font_6x8, White);
+	          } else if (current_game_state ==
+	         GAME_STATE_PLAYING) {
+	              // パドルとボールを描画
+	              ssd1306_DrawFilledRectangle(0,
+	         player_paddle_y, PADDLE_WIDTH, PADDLE_HEIGHT,
+	         White); // プレイヤーパドル
+	              ssd1306_DrawFilledRectangle(SCREEN_WIDTH
+	         - PADDLE_WIDTH, cpu_paddle_y, PADDLE_WIDTH,
+	         PADDLE_HEIGHT, White); // CPUパドル
+	              ssd1306_DrawFilledRectangle(ball_x,
+	         ball_y, BALL_SIZE, BALL_SIZE, White); // ボール
+
+	              // スコア表示
+	              char score_str[10];
+	              sprintf(score_str, "%d : %d",
+	         player_score, cpu_score);
+	              ssd1306_SetCursor(SCREEN_WIDTH / 2 - (
+	         strlen(score_str) * Font_7x10.FontWidth) / 2, 0);
+	         // 中央上部に表示
+	              ssd1306_WriteString(score_str, Font_7x10,
+	         White);
+	          } else if (current_game_state ==
+	         GAME_STATE_GAMEOVER) {
+	              ssd1306_SetCursor(20, 20);
+	              ssd1306_WriteString("GAME OVER",
+	         Font_7x10, White);
+	              char final_score_str[20];
+	              sprintf(final_score_str, "Final: %d - %d"
+	         , player_score, cpu_score);
+	              ssd1306_SetCursor(10, 40);
+	              ssd1306_WriteString(final_score_str,
+	         Font_6x8, White);
+	              ssd1306_SetCursor(10, 50);
+	              ssd1306_WriteString("Press BTN1 to
+	         Restart", Font_6x8, White);
+	          }
+
+	          ssd1306_UpdateScreen(); //
+	         描画内容をディスプレイに反映
+
+	          HAL_Delay(10); // ゲームの速度調整
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
