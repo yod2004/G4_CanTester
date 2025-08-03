@@ -21,6 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "can.h"
+//#include "gpio.h"
+#include "Robstride.h"
 
 /* USER CODE END Includes */
 
