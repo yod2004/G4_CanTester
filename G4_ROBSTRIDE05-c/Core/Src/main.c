@@ -52,18 +52,25 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
+
 FDCAN_HandleTypeDef hfdcan1;
 
 /* USER CODE BEGIN PV */
 FDCAN_TxHeaderTypeDef TxHeader;
 uint8_t TxData[8];
 uint8_t RxData[8];
+
+uint32_t value = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_FDCAN1_Init(void);
+static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 int float_to_uint(float x,float x_min,float x_max,int bits)
 {
@@ -119,7 +126,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 }
 
 void EnableMotor(){
-	TxHeader.Identifier = 0x03<<24|MASTER_ID<<8|MOTOR_ID;
+	TxHeader.Identifier = (0x3<<24) | (MASTER_ID<<8) |(MOTOR_ID);
 	for(uint8_t i = 0; i < 7; i++){
 		TxData[i] = 0;
 	}
@@ -130,8 +137,21 @@ void EnableMotor(){
 	}
 }
 
+void ResetMotorAngle(){
+	TxHeader.Identifier = (0x6<<24) | (MASTER_ID<<8) |(MOTOR_ID);
+	for(uint8_t i = 0; i < 7; i++){
+		TxData[i] = 0;
+	}
+	TxData[0] = 1;
+	if(HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1)) {
+		if(HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData) != HAL_OK) {
+			Error_Handler();
+		}
+	}
+}
+
 void MoveMotor(float Torque, float Angle, float Speed, float Kp, float Kd){
-	TxHeader.Identifier = 0x001<<24|float_to_uint(Torque,T_MIN,T_MAX,16)|MOTOR_ID;
+	TxHeader.Identifier = 0x001<<24|(float_to_uint(Torque,T_MIN,T_MAX,16))<<8|MOTOR_ID;
 	TxData[0] = float_to_uint(Angle, P_MIN,P_MAX, 16)>>8;
 	TxData[1] = float_to_uint(Angle, P_MIN,P_MAX, 16);
 	TxData[2] = float_to_uint(Speed, V_MIN,V_MAX, 16)>>8;
@@ -182,23 +202,31 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_FDCAN1_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   FDCAN1_Config();
   EnableMotor();
+  HAL_Delay(50);
+  ResetMotorAngle();
+
+  HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+  HAL_ADC_Start_DMA(&hadc1, &value, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  static int cnt = 0;
-	  cnt ++;
-	  if(cnt % 99 == 0 && cnt % 2 == 1){
-		  MoveMotor(0, 2.0, 0, 3.0, 0.2);
-	  }else if(cnt % 99 == 0 && cnt % 2 == 0){
-		  MoveMotor(0, 1.0, 0, 3.0, 0.2);
-	  }
+//	  static int cnt = 0;
+//	  cnt ++;
+//	  if(cnt % 99 == 0 && cnt % 2 == 1){
+//		  MoveMotor(0, 2.0, 0, 3.0, 0.2);
+//	  }else if(cnt % 99 == 0 && cnt % 2 == 0){
+//		  MoveMotor(0, 1.0, 0, 3.0, 0.2);
+//	  }
+	  MoveMotor(0, 1.0 * (4096 - value) / 4096, 0, 3.0, 0.2);
 	  HAL_Delay(50);
     /* USER CODE END WHILE */
 
@@ -248,6 +276,74 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_MultiModeTypeDef multimode = {0};
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Common config
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV2;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.GainCompensation = 0;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc1.Init.LowPowerAutoWait = DISABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
+  hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
+  hadc1.Init.OversamplingMode = DISABLE;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure the ADC multi-mode
+  */
+  multimode.Mode = ADC_MODE_INDEPENDENT;
+  if (HAL_ADCEx_MultiModeConfigChannel(&hadc1, &multimode) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;
+  sConfig.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
   * @brief FDCAN1 Initialization Function
   * @param None
   * @retval None
@@ -287,6 +383,23 @@ static void MX_FDCAN1_Init(void)
   /* USER CODE BEGIN FDCAN1_Init 2 */
 
   /* USER CODE END FDCAN1_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMAMUX1_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
 
 }
 
