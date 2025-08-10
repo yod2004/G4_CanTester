@@ -21,12 +21,32 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "stdbool.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct {
+	bool switch_flag;
+	float angle;
+	float angular_velocity;
+	float target;
+	float error;
+	float pre_error;
+	float integral_error;
+	float delta_error;
+	float p_val;
+	float i_val;
+	float d_val;
+	int16_t power;
+}MECHANISM;
+MECHANISM robomas ={0};
 
+
+typedef enum{
+	angle,//位置を制御したいとき
+	angular_velocity//速度を制御したいとき
+}PID_TARGET;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -44,6 +64,7 @@
  #define KD_MAX 5.0f
  #define T_MIN -17.0f
  #define T_MAX 17.0f
+#define DELTA_T 0.01
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -63,6 +84,11 @@ uint8_t TxData[8];
 uint8_t RxData[8];
 
 uint32_t value = 0;
+
+uint8_t data_to_robomas[8];
+
+bool bt_right;
+bool bt_left;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -84,7 +110,7 @@ int float_to_uint(float x,float x_min,float x_max,int bits)
 static void FDCAN1_Config(void){
 	FDCAN_FilterTypeDef sFilterConfig;
 
-	sFilterConfig.IdType = FDCAN_EXTENDED_ID;
+	sFilterConfig.IdType = FDCAN_STANDARD_ID;
 	sFilterConfig.FilterIndex = 0;
 	sFilterConfig.FilterType = FDCAN_FILTER_MASK;
 	sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
@@ -122,10 +148,15 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 		if(HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) != HAL_OK){
 			Error_Handler();
 		}
+		if(RxHeader.Identifier = 0x200){
+			robomas.angle = RxData[0] << 8 | RxData[1];
+			robomas.angular_velocity = (int16_t)(RxData[2] << 8 | RxData[3]);
+		}
 	}
 }
 
 void EnableMotor(){
+	TxHeader.IdType = FDCAN_EXTENDED_ID;
 	TxHeader.Identifier = (0x3<<24) | (MASTER_ID<<8) |(MOTOR_ID);
 	for(uint8_t i = 0; i < 7; i++){
 		TxData[i] = 0;
@@ -138,6 +169,7 @@ void EnableMotor(){
 }
 
 void ResetMotorAngle(){
+	TxHeader.IdType = FDCAN_EXTENDED_ID;
 	TxHeader.Identifier = (0x6<<24) | (MASTER_ID<<8) |(MOTOR_ID);
 	for(uint8_t i = 0; i < 7; i++){
 		TxData[i] = 0;
@@ -151,6 +183,7 @@ void ResetMotorAngle(){
 }
 
 void MoveMotor(float Torque, float Angle, float Speed, float Kp, float Kd){
+	TxHeader.IdType = FDCAN_EXTENDED_ID;
 	TxHeader.Identifier = 0x001<<24|(float_to_uint(Torque,T_MIN,T_MAX,16))<<8|MOTOR_ID;
 	TxData[0] = float_to_uint(Angle, P_MIN,P_MAX, 16)>>8;
 	TxData[1] = float_to_uint(Angle, P_MIN,P_MAX, 16);
@@ -165,6 +198,40 @@ void MoveMotor(float Torque, float Angle, float Speed, float Kp, float Kd){
 			Error_Handler();
 		}
 	}
+}
+
+void drive_robomas () {
+	if (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) > 0) {
+		data_to_robomas[0] = (uint8_t )(robomas.power >> 8);
+		data_to_robomas[1] = (uint8_t)(robomas.power & 0xFF);
+		TxHeader.IdType = FDCAN_STANDARD_ID;
+		TxHeader.Identifier = 0x200;
+		if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, data_to_robomas) != HAL_OK) {
+			Error_Handler();
+		}
+	}
+}
+
+void pid(MECHANISM* mechanism, PID_TARGET pid_target, float target_value, float kp, float ki, float kd, float range, int8_t motor_direction){
+	mechanism->target = target_value;
+	mechanism->pre_error = mechanism->error;
+	if(pid_target == angle){//もし角度を制御したいなら
+		mechanism->error = mechanism->target - mechanism->angle;//偏差の式にはangleを使用
+	}else if(pid_target == angular_velocity){//もし角速度を制御したいなら
+		mechanism->error = mechanism->target - mechanism->angular_velocity;//偏差の式にはangular_velocityを使用
+	}
+	mechanism->delta_error = (mechanism->error - mechanism->pre_error)/DELTA_T;
+	mechanism->integral_error += (mechanism->error + mechanism->pre_error) * DELTA_T / 2;
+	mechanism->p_val = kp * mechanism->error;
+	mechanism->i_val = ki * mechanism->integral_error;
+	mechanism->d_val = kd * mechanism->delta_error;
+	float u = mechanism->p_val + mechanism->i_val + mechanism->d_val;
+	if(u >= range){//オーバーフロー対策
+		u = range;
+	}else if(u <= -1 * range){
+		u = -1 * range;
+	}
+	mechanism->power = motor_direction * u;
 }
 /* USER CODE END PFP */
 
@@ -219,13 +286,17 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-//	  static int cnt = 0;
-//	  cnt ++;
-//	  if(cnt % 99 == 0 && cnt % 2 == 1){
-//		  MoveMotor(0, 2.0, 0, 3.0, 0.2);
-//	  }else if(cnt % 99 == 0 && cnt % 2 == 0){
-//		  MoveMotor(0, 1.0, 0, 3.0, 0.2);
-//	  }
+	  bt_right = HAL_GPIO_ReadPin(bt_right_GPIO_Port, bt_right_Pin);
+	  bt_left = HAL_GPIO_ReadPin(bt_left_GPIO_Port, bt_left_Pin);
+	  if(bt_right == 1){
+		  pid(&robomas, angular_velocity, 500, 2, 0, 0, 3000, 1);
+	  }else if(bt_left == 1){
+		  pid(&robomas, angular_velocity, -500, 5, 0, 0, 3000, 1);
+	  }else{
+		  pid(&robomas, angular_velocity, 0, 3, 0, 0, 3000, 1);
+	  }
+
+	  drive_robomas();
 	  MoveMotor(0, 1.0 * (4096 - value) / 4096, 0, 3.0, 0.2);
 	  HAL_Delay(50);
     /* USER CODE END WHILE */
@@ -373,7 +444,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.DataSyncJumpWidth = 1;
   hfdcan1.Init.DataTimeSeg1 = 1;
   hfdcan1.Init.DataTimeSeg2 = 1;
-  hfdcan1.Init.StdFiltersNbr = 0;
+  hfdcan1.Init.StdFiltersNbr = 1;
   hfdcan1.Init.ExtFiltersNbr = 1;
   hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
   if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK)
@@ -410,12 +481,20 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pins : bt_right_Pin bt_left_Pin */
+  GPIO_InitStruct.Pin = bt_right_Pin|bt_left_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
